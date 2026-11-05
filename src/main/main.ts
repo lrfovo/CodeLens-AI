@@ -3,12 +3,14 @@ import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { analyzeCode, askFollowup, extractCodeFromImage, type AiConfig } from './ai'
+import { HistoryStore } from './history'
 import { defaultModels, type DesktopSettings, type Provider } from '../shared/desktop'
 import type { CodeSource, Depth } from '../shared/source'
 
 let mainWindow: BrowserWindow | null = null
 let bubbleWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
+let historyStore: HistoryStore
 let quitting = false
 let provider: Provider = 'openai'
 const models = { ...defaultModels }
@@ -132,20 +134,44 @@ function registerIpc(): void {
   ipcMain.handle('ai:analyze', async (event, source: unknown, depth: Depth) => {
     requireMain(event)
     if (!validSource(source) || !['beginner', 'deep'].includes(depth)) throw new Error('代码输入无效')
-    return analyzeCode(await aiConfig(), source, depth)
+    const config = await aiConfig()
+    const analysis = await analyzeCode(config, source, depth)
+    let historyId: string | null = null
+    try { historyId = (await historyStore.add(config.provider, config.model, source, analysis)).id }
+    catch (error) { console.error('Failed to save analysis history', error) }
+    return { analysis, historyId }
   })
   ipcMain.handle('ai:extract', async (event, image: unknown) => {
     requireMain(event)
     if (typeof image !== 'string' || image.length > 20_000_000) throw new Error('图片无效或过大')
     return extractCodeFromImage(await aiConfig(), image)
   })
-  ipcMain.handle('ai:ask', async (event, source: unknown, question: unknown, history: unknown) => {
+  ipcMain.handle('ai:ask', async (event, source: unknown, question: unknown, history: unknown, historyId: unknown) => {
     requireMain(event)
     if (!validSource(source) || typeof question !== 'string' || !question.trim() || question.length > 2000 ||
+        (historyId !== null && typeof historyId !== 'string') ||
         !Array.isArray(history) || history.length > 20 || history.some((item) =>
           typeof item?.question !== 'string' || typeof item?.answer !== 'string')) throw new Error('提问无效')
-    return askFollowup(await aiConfig(), source, question, history)
+    const answer = await askFollowup(await aiConfig(), source, question, history)
+    let historySaved = false
+    if (historyId) {
+      try { await historyStore.appendTurn(historyId, source.id, question, answer); historySaved = true }
+      catch (error) { console.error('Failed to save follow-up history', error) }
+    }
+    return { answer, historySaved }
   })
+  ipcMain.handle('history:list', (event) => { requireMain(event); return historyStore.list() })
+  ipcMain.handle('history:get', (event, id: unknown) => {
+    requireMain(event)
+    if (typeof id !== 'string') throw new Error('历史记录 ID 无效')
+    return historyStore.get(id)
+  })
+  ipcMain.handle('history:delete', (event, id: unknown) => {
+    requireMain(event)
+    if (typeof id !== 'string') throw new Error('历史记录 ID 无效')
+    return historyStore.delete(id)
+  })
+  ipcMain.handle('history:clear', (event) => { requireMain(event); return historyStore.clear() })
   ipcMain.handle('window:collapse', (event) => { requireMain(event); collapse() })
   ipcMain.handle('window:expand', (event) => {
     if (event.sender !== bubbleWindow?.webContents) throw new Error('无权调用该操作')
@@ -206,6 +232,10 @@ async function startCapture(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  historyStore = new HistoryStore(path.join(app.getPath('userData'), 'history'), {
+    encode: (text) => safeStorage.encryptStringAsync(text),
+    decode: async (data) => (await safeStorage.decryptStringAsync(data)).result,
+  })
   for (const selected of ['openai', 'deepseek'] as const) {
     try { models[selected] = (await readFile(modelPath(selected), 'utf8')).trim() || models[selected] }
     catch { /* default model */ }

@@ -1,6 +1,6 @@
 {
   "name": "codelens-ai",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Windows floating assistant for Chinese code explanations",
@@ -30,7 +30,7 @@
   "build": {
     "appId": "com.codelensai.desktop",
     "productName": "CodeLens AI",
-    "directories": { "output": "release" },
+    "directories": { "output": "release/0.3.0" },
     "files": ["dist/**/*", "package.json"],
     "win": { "target": "nsis", "icon": "build/icon.ico" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }

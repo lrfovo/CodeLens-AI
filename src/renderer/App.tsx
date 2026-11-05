@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { defaultModels, languages, type Provider } from '../shared/desktop'
+import type { HistorySummary, HistoryTurn } from '../shared/history'
 import { createSource, type Analysis, type CodeSource, type Depth, type Language } from '../shared/source'
-
-type Turn = { question: string; answer: string }
 
 async function readImage(file: File): Promise<string> {
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('只支持 PNG、JPEG 或 WebP 图片')
@@ -38,7 +37,13 @@ export function App({ bubble }: { bubble: boolean }) {
   const [draftModel, setDraftModel] = useState(defaultModels.openai)
   const [shortcutReady, setShortcutReady] = useState(true)
   const [question, setQuestion] = useState('')
-  const [history, setHistory] = useState<Turn[]>([])
+  const [turns, setTurns] = useState<HistoryTurn[]>([])
+  const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyItems, setHistoryItems] = useState<HistorySummary[]>([])
+  const [historyQuery, setHistoryQuery] = useState('')
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
 
   useEffect(() => {
     if (bubble) return
@@ -51,9 +56,11 @@ export function App({ bubble }: { bubble: boolean }) {
     }).catch((cause) => setError(message(cause)))
     const offCode = window.codelens.onClipboard((value) => {
       setText(value); setSource(null); setAnalysis(null); setImage(''); setError('')
+      setCurrentHistoryId(null); setTurns([])
     })
     const offImage = window.codelens.onImage((value) => {
       setImage(value); setText(''); setSource(null); setAnalysis(null); setUncertain(''); setError('')
+      setCurrentHistoryId(null); setTurns([])
     })
     const paste = (event: ClipboardEvent) => {
       const file = Array.from(event.clipboardData?.files ?? []).find((item) => item.type.startsWith('image/'))
@@ -82,6 +89,7 @@ export function App({ bubble }: { bubble: boolean }) {
       const value = await window.codelens.readClipboard()
       if (!value.trim()) throw new Error('剪贴板中没有文字代码')
       setText(value); setImage(''); setSource(null); setAnalysis(null); setError('')
+      setCurrentHistoryId(null); setTurns([])
     } catch (cause) { setError(message(cause)) }
   }
 
@@ -92,7 +100,9 @@ export function App({ bubble }: { bubble: boolean }) {
       const next = createSource(text, language)
       setBusy('analysis')
       const result = await window.codelens.analyze(next, depth)
-      setSource(next); setAnalysis(result); setSelectedLine(null); setSelectedId(null); setHistory([])
+      setSource(next); setAnalysis(result.analysis); setSelectedLine(null); setSelectedId(null)
+      setTurns([]); setCurrentHistoryId(result.historyId)
+      if (!result.historyId) setError('解析已完成，但历史记录保存失败')
     } catch (cause) { setError(message(cause)) }
     finally { setBusy(null) }
   }
@@ -112,8 +122,9 @@ export function App({ bubble }: { bubble: boolean }) {
     if (!source || !question.trim()) return
     setError(''); setBusy('ask')
     try {
-      const answer = await window.codelens.ask(source, question.trim(), history)
-      setHistory([...history, { question: question.trim(), answer }]); setQuestion('')
+      const result = await window.codelens.ask(source, question.trim(), turns.slice(-4), currentHistoryId)
+      setTurns([...turns, { question: question.trim(), answer: result.answer }]); setQuestion('')
+      if (currentHistoryId && !result.historySaved) setError('回答已生成，但追问未能保存到历史记录')
     } catch (cause) { setError(message(cause)) }
     finally { setBusy(null) }
   }
@@ -137,8 +148,51 @@ export function App({ bubble }: { bubble: boolean }) {
   async function acceptImage(file: File) {
     try {
       setImage(await readImage(file)); setText(''); setSource(null); setAnalysis(null); setUncertain(''); setError('')
+      setCurrentHistoryId(null); setTurns([])
     } catch (cause) { setError(message(cause)) }
   }
+
+  async function openHistory() {
+    setHistoryOpen(true); setHistoryBusy(true); setConfirmClear(false); setError('')
+    try { setHistoryItems(await window.codelens.listHistory()) }
+    catch (cause) { setError(message(cause)) }
+    finally { setHistoryBusy(false) }
+  }
+
+  async function restoreHistory(id: string) {
+    setHistoryBusy(true); setError('')
+    try {
+      const record = await window.codelens.getHistory(id)
+      setText(record.source.text); setSource(record.source); setAnalysis(record.analysis)
+      setLanguage(record.source.language); setTurns(record.turns); setCurrentHistoryId(record.id)
+      setImage(''); setUncertain(''); setQuestion(''); setSelectedLine(null); setSelectedId(null)
+      setHistoryOpen(false)
+    } catch (cause) { setError(message(cause)) }
+    finally { setHistoryBusy(false) }
+  }
+
+  async function deleteHistory(id: string) {
+    setHistoryBusy(true); setError('')
+    try {
+      await window.codelens.deleteHistory(id)
+      setHistoryItems((items) => items.filter((item) => item.id !== id))
+      if (currentHistoryId === id) setCurrentHistoryId(null)
+    } catch (cause) { setError(message(cause)) }
+    finally { setHistoryBusy(false) }
+  }
+
+  async function clearHistory() {
+    setHistoryBusy(true); setError('')
+    try {
+      await window.codelens.clearHistory()
+      setHistoryItems([]); setCurrentHistoryId(null); setConfirmClear(false)
+    } catch (cause) { setError(message(cause)) }
+    finally { setHistoryBusy(false) }
+  }
+
+  const visibleHistory = historyItems.filter((item) =>
+    `${item.preview} ${item.overview} ${item.language} ${item.provider}`.toLowerCase()
+      .includes(historyQuery.trim().toLowerCase()))
 
   return <div className="app-shell" onDragOver={(event) => event.preventDefault()}
     onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void acceptImage(file) }}>
@@ -163,6 +217,7 @@ export function App({ bubble }: { bubble: boolean }) {
         <button className="action primary" onClick={() => void useClipboard()}>粘贴剪贴板代码</button>
         <button className="action" onClick={() => void window.codelens.startCapture().catch((cause) => setError(message(cause)))}>截取屏幕</button>
         <label className="action file-action">导入图片<input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void acceptImage(file); event.target.value = '' }} /></label>
+        <button className="action" disabled={!!busy} onClick={() => void openHistory()}>历史记录</button>
       </div>
       <div className="toolbar-group selectors">
         <label>语言 <select value={language} onChange={(event) => setLanguage(event.target.value as Language)}>{languages.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
@@ -187,7 +242,7 @@ export function App({ bubble }: { bubble: boolean }) {
             </button>
           })}
         </div> : <div className="editor-wrap"><span className="editor-caption">粘贴或输入代码 · 行号从片段第 1 行开始</span><textarea value={text} onChange={(event) => setText(event.target.value)} spellCheck={false} placeholder={'在这里粘贴代码…\n\n或使用上方按钮读取剪贴板。'} aria-label="待解析的代码" /></div>}
-        <div className="pane-footer">{source ? <button className="text-button" onClick={() => { setSource(null); setAnalysis(null) }}>编辑代码</button> : <><span>支持 C、C++、Python 与 STM32</span><button className="action primary" disabled={!!busy || !text.trim()} onClick={() => void analyze()}>{busy === 'analysis' ? '正在解析…' : '开始解析 →'}</button></>}</div>
+        <div className="pane-footer">{source ? <button className="text-button" onClick={() => { setSource(null); setAnalysis(null); setCurrentHistoryId(null); setTurns([]) }}>编辑代码</button> : <><span>支持 C、C++、Python 与 STM32</span><button className="action primary" disabled={!!busy || !text.trim()} onClick={() => void analyze()}>{busy === 'analysis' ? '正在解析…' : '开始解析 →'}</button></>}</div>
       </section>
 
       <section className="pane explain-pane" aria-label="中文解释">
@@ -203,14 +258,39 @@ export function App({ bubble }: { bubble: boolean }) {
               <strong>{item.summary}</strong><span className="detail">{item.detail}</span>
             </button>)}
             <div className="conversation"><span className="section-label">继续提问</span>
-              {history.map((turn, index) => <div className="turn" key={index}><b>你：{turn.question}</b><p>{turn.answer}</p></div>)}
+              {turns.map((turn, index) => <div className="turn" key={index}><b>你：{turn.question}</b><p>{turn.answer}</p></div>)}
               <form onSubmit={(event) => { event.preventDefault(); void ask() }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="例如：这个函数为什么会进入中断？" aria-label="继续提问" /><button disabled={!!busy || !question.trim()}>{busy === 'ask' ? '…' : '发送'}</button></form>
             </div>
           </div>}
       </section>
     </main>
 
-    <footer className="statusbar"><span>本地片段行号 · 原文不会被模型改写</span><span>截图与代码仅在你主动请求时发送</span></footer>
+    <footer className="statusbar"><span>本地片段行号 · 解析历史加密保存在本机</span><span>截图原图不会写入历史记录</span></footer>
+
+    {historyOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false) }}>
+      <div className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
+        <div className="modal-top"><div><span className="eyebrow">LIBRARY</span><h2 id="history-title">历史记录</h2></div><button aria-label="关闭历史记录" onClick={() => setHistoryOpen(false)}>×</button></div>
+        <p className="history-intro">成功解析的代码、中文解释和追问加密保存在本机；截图原图不保存。</p>
+        <input className="history-search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="搜索代码或解释…" aria-label="搜索历史记录" />
+        {error && <div className="notice" role="alert">{error}</div>}
+        <div className="history-list">
+          {historyBusy && historyItems.length === 0 ? <div className="history-empty">正在读取历史记录…</div> :
+            visibleHistory.length === 0 ? <div className="history-empty">{historyItems.length ? '没有匹配的记录' : '还没有解析记录'}</div> :
+              visibleHistory.map((item) => <div className="history-row" key={item.id}>
+                <button className="history-open" disabled={historyBusy} onClick={() => void restoreHistory(item.id)}>
+                  <span className="history-meta">{new Date(item.createdAt).toLocaleString('zh-CN')} · {item.provider === 'openai' ? 'OpenAI' : 'DeepSeek'} · {item.lineCount} 行</span>
+                  <code>{item.preview}</code><span className="history-overview">{item.overview || '无整体概览'}</span>
+                </button>
+                <button className="history-delete" disabled={historyBusy} aria-label={`删除记录：${item.preview}`} onClick={() => void deleteHistory(item.id)}>删除</button>
+              </div>)}
+        </div>
+        <div className="history-actions">
+          {historyItems.length > 0 && (confirmClear ? <><span>确定删除全部历史记录？</span><button className="danger" disabled={historyBusy} onClick={() => void clearHistory()}>确认清空</button><button onClick={() => setConfirmClear(false)}>取消</button></> :
+            <button className="danger" disabled={historyBusy} onClick={() => setConfirmClear(true)}>清空全部</button>)}
+          <button className="action" onClick={() => setHistoryOpen(false)}>关闭</button>
+        </div>
+      </div>
+    </div>}
 
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false) }}>
       <div className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
