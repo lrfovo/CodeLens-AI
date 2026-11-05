@@ -1,6 +1,6 @@
 # CodeLens AI 首版规格
 
-依据 `D:\CodeLens AI_GitHub开源项目调研报告.md` 的方案 C 实施。
+采用独立 Electron 主程序，复用开源依赖并自行实现桌面交互与代码解析工作流。
 
 ## 目标
 

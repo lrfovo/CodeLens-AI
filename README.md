@@ -4,10 +4,10 @@ Windows 桌面代码解析悬浮助手。复制代码或选择屏幕区域，使
 
 ## 运行
 
-需要 Windows 10/11、Node.js 22 或更新版本，以及可用的 OpenAI 或 DeepSeek API 密钥。
+需要 Windows、Node.js 22 或更新版本，以及可用的 OpenAI 或 DeepSeek API 密钥。桌面交互已在 Windows 11 上检查。
 
 ```powershell
-npm install
+npm ci
 npm run typecheck
 npm test
 npm start
@@ -48,6 +48,6 @@ Electron 主进程管理窗口、全局快捷键、屏幕捕获、密钥与网�
 - 截图选区仅覆盖鼠标所在的一块显示器；跨屏选区未实现。
 - 不读取编辑器文件路径或原文件行号，也不与 VS Code 插件同步。
 - 尚未提供离线模型、跨设备历史同步、自动更新或代码签名。
-- 未使用真实 API 密钥做端到端请求；自动测试使用模拟响应。
+- 自动测试使用模拟 API 响应，不会消耗你的 API 额度。
 
-调研与选型依据见 [GitHub 开源项目调研报告](../CodeLens%20AI_GitHub开源项目调研报告.md)，首版范围见 [SPEC.md](SPEC.md)。
+首版范围见 [SPEC.md](SPEC.md)。项目采用 [MIT 许可证](LICENSE)，欢迎提交 Issue 和 Pull Request。

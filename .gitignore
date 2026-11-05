@@ -5,4 +5,7 @@ release/
 .env.*
 *.log
 *.pem
+*.p12
+*.pfx
+*.key
 .cache/

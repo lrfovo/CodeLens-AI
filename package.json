@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "description": "Windows floating assistant for Chinese code explanations",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/lrfovo/CodeLens-AI.git" },
   "main": "dist/main/main.cjs",
   "scripts": {
     "build": "node scripts/build.mjs",
