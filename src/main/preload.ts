@@ -12,8 +12,9 @@ function onString(channel: string, callback: (value: string) => void): () => voi
 
 const bridge: DesktopBridge = {
   settings: () => ipcRenderer.invoke('settings:get'),
-  setApiKey: (key) => ipcRenderer.invoke('settings:key', key),
-  setModel: (model) => ipcRenderer.invoke('settings:model', model),
+  setProvider: (provider) => ipcRenderer.invoke('settings:provider', provider),
+  setApiKey: (provider, key) => ipcRenderer.invoke('settings:key', provider, key),
+  setModel: (provider, model) => ipcRenderer.invoke('settings:model', provider, model),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   analyze: (source, depth) => ipcRenderer.invoke('ai:analyze', source, depth),
   extractImage: (image) => ipcRenderer.invoke('ai:extract', image),

@@ -1,10 +1,10 @@
 # CodeLens AI
 
-Windows 桌面代码解析悬浮助手。复制代码或选择屏幕区域，使用你自己的 OpenAI API 密钥生成中文解释。项目目前是首版原型。
+Windows 桌面代码解析悬浮助手。复制代码或选择屏幕区域，使用你自己的 OpenAI 或 DeepSeek API 密钥生成中文解释。项目目前是首版原型。
 
 ## 运行
 
-需要 Windows 10/11、Node.js 22 或更新版本，以及可用的 OpenAI API 密钥。
+需要 Windows 10/11、Node.js 22 或更新版本，以及可用的 OpenAI 或 DeepSeek API 密钥。
 
 ```powershell
 npm install
@@ -13,7 +13,7 @@ npm test
 npm start
 ```
 
-在右上角“设置”中输入 API 密钥。默认模型为 `gpt-4.1-mini`，也可以填写支持图像输入及 JSON Schema 结构化输出的模型。程序使用 OpenAI Chat Completions API；模型能力和 API 费用由所选模型及你的账户决定。
+在右上角“设置”中选择服务商并输入对应的 API 密钥。OpenAI 默认模型为 `gpt-4.1-mini`；DeepSeek 默认模型为 `deepseek-flash`。两家的密钥和模型分别保存，切换服务商不会覆盖另一家的配置。截图识别需要所选模型支持图片输入。模型能力和 API 费用由服务商及你的账户决定。
 
 ## 使用
 
@@ -36,7 +36,7 @@ npm run dist:win
 
 ## 隐私与技术边界
 
-API 密钥由 Electron `safeStorage` 使用 Windows 用户加密机制保存于本机。代码和截图只在你主动请求转写、解析或提问时发往 OpenAI API；程序不自动监控屏幕或修改编辑器文件。截图和会话默认不写入磁盘。运行时需要网络连接。
+API 密钥由 Electron `safeStorage` 使用 Windows 用户加密机制分别保存于本机。代码和截图只在你主动请求转写、解析或提问时发往当前选定的 OpenAI 或 DeepSeek API；程序不自动监控屏幕或修改编辑器文件。截图和会话默认不写入磁盘。运行时需要网络连接。旧版本保存的 OpenAI 密钥和模型沿用原路径。
 
 Electron 主进程管理窗口、全局快捷键、屏幕捕获、密钥与网络请求。渲染进程启用沙箱和上下文隔离，仅通过限定的 preload API 调用这些能力。
 

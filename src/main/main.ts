@@ -2,15 +2,16 @@ import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain
   safeStorage, screen } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { analyzeCode, askFollowup, extractCodeFromImage } from './openai'
-import type { DesktopSettings } from '../shared/desktop'
+import { analyzeCode, askFollowup, extractCodeFromImage, type AiConfig } from './ai'
+import { defaultModels, type DesktopSettings, type Provider } from '../shared/desktop'
 import type { CodeSource, Depth } from '../shared/source'
 
 let mainWindow: BrowserWindow | null = null
 let bubbleWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let quitting = false
-let model = 'gpt-4.1-mini'
+let provider: Provider = 'openai'
+const models = { ...defaultModels }
 const shortcuts = { open: false, capture: false }
 const html = path.join(__dirname, '../renderer/index.html')
 const preload = path.join(__dirname, 'preload.cjs')
@@ -52,22 +53,41 @@ function collapse(): void {
 }
 
 async function settings(): Promise<DesktopSettings> {
-  try { await readFile(keyPath()); return { hasApiKey: true, model, shortcuts } }
-  catch { return { hasApiKey: false, model, shortcuts } }
+  const hasKey = async (selected: Provider) => {
+    try { await readFile(keyPath(selected)); return true } catch { return false }
+  }
+  return { provider, providers: {
+    openai: { hasApiKey: await hasKey('openai'), model: models.openai },
+    deepseek: { hasApiKey: await hasKey('deepseek'), model: models.deepseek },
+  }, shortcuts }
 }
 
-function keyPath(): string { return path.join(app.getPath('userData'), 'api-key.bin') }
-function modelPath(): string { return path.join(app.getPath('userData'), 'model.txt') }
+function validProvider(value: unknown): value is Provider {
+  return value === 'openai' || value === 'deepseek'
+}
 
-async function getKey(): Promise<string> {
+function keyPath(selected: Provider): string {
+  return path.join(app.getPath('userData'), selected === 'openai' ? 'api-key.bin' : 'deepseek-key.bin')
+}
+function modelPath(selected: Provider): string {
+  return path.join(app.getPath('userData'), selected === 'openai' ? 'model.txt' : 'deepseek-model.txt')
+}
+function providerPath(): string { return path.join(app.getPath('userData'), 'provider.txt') }
+
+async function getKey(selected: Provider): Promise<string> {
   try {
-    const decrypted = await safeStorage.decryptStringAsync(await readFile(keyPath()))
+    const decrypted = await safeStorage.decryptStringAsync(await readFile(keyPath(selected)))
     if (decrypted.shouldReEncrypt) {
-      await writeFile(keyPath(), await safeStorage.encryptStringAsync(decrypted.result))
+      await writeFile(keyPath(selected), await safeStorage.encryptStringAsync(decrypted.result))
     }
     return decrypted.result
   }
-  catch { throw new Error('请先在设置中保存 OpenAI API 密钥') }
+  catch { throw new Error(`请先在设置中保存 ${selected === 'openai' ? 'OpenAI' : 'DeepSeek'} API 密钥`) }
+}
+
+async function aiConfig(): Promise<AiConfig> {
+  const selected = provider
+  return { provider: selected, key: await getKey(selected), model: models[selected] }
 }
 
 function validSource(value: unknown): value is CodeSource {
@@ -88,35 +108,43 @@ function requireMain(event: Electron.IpcMainInvokeEvent): void {
 
 function registerIpc(): void {
   ipcMain.handle('settings:get', async (event) => { requireMain(event); return settings() })
-  ipcMain.handle('settings:key', async (event, key: unknown) => {
+  ipcMain.handle('settings:provider', async (event, selected: unknown) => {
     requireMain(event)
+    if (!validProvider(selected)) throw new Error('AI 服务商无效')
+    await writeFile(providerPath(), selected, 'utf8')
+    provider = selected
+  })
+  ipcMain.handle('settings:key', async (event, selected: unknown, key: unknown) => {
+    requireMain(event)
+    if (!validProvider(selected)) throw new Error('AI 服务商无效')
     if (typeof key !== 'string' || key.length > 300 || !key.trim()) throw new Error('API 密钥不能为空')
     if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('当前系统无法安全保存 API 密钥')
-    await writeFile(keyPath(), await safeStorage.encryptStringAsync(key.trim()))
+    await writeFile(keyPath(selected), await safeStorage.encryptStringAsync(key.trim()))
   })
-  ipcMain.handle('settings:model', async (event, value: unknown) => {
+  ipcMain.handle('settings:model', async (event, selected: unknown, value: unknown) => {
     requireMain(event)
+    if (!validProvider(selected)) throw new Error('AI 服务商无效')
     if (typeof value !== 'string' || !/^[a-zA-Z0-9_.-]{2,80}$/.test(value)) throw new Error('模型名称无效')
-    model = value
-    await writeFile(modelPath(), model, 'utf8')
+    await writeFile(modelPath(selected), value, 'utf8')
+    models[selected] = value
   })
   ipcMain.handle('clipboard:read', (event) => { requireMain(event); return clipboard.readText() })
   ipcMain.handle('ai:analyze', async (event, source: unknown, depth: Depth) => {
     requireMain(event)
     if (!validSource(source) || !['beginner', 'deep'].includes(depth)) throw new Error('代码输入无效')
-    return analyzeCode(await getKey(), model, source, depth)
+    return analyzeCode(await aiConfig(), source, depth)
   })
   ipcMain.handle('ai:extract', async (event, image: unknown) => {
     requireMain(event)
     if (typeof image !== 'string' || image.length > 20_000_000) throw new Error('图片无效或过大')
-    return extractCodeFromImage(await getKey(), model, image)
+    return extractCodeFromImage(await aiConfig(), image)
   })
   ipcMain.handle('ai:ask', async (event, source: unknown, question: unknown, history: unknown) => {
     requireMain(event)
     if (!validSource(source) || typeof question !== 'string' || !question.trim() || question.length > 2000 ||
         !Array.isArray(history) || history.length > 20 || history.some((item) =>
           typeof item?.question !== 'string' || typeof item?.answer !== 'string')) throw new Error('提问无效')
-    return askFollowup(await getKey(), model, source, question, history)
+    return askFollowup(await aiConfig(), source, question, history)
   })
   ipcMain.handle('window:collapse', (event) => { requireMain(event); collapse() })
   ipcMain.handle('window:expand', (event) => {
@@ -178,7 +206,14 @@ async function startCapture(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  try { model = (await readFile(modelPath(), 'utf8')).trim() || model } catch { /* default model */ }
+  for (const selected of ['openai', 'deepseek'] as const) {
+    try { models[selected] = (await readFile(modelPath(selected), 'utf8')).trim() || models[selected] }
+    catch { /* default model */ }
+  }
+  try {
+    const saved = (await readFile(providerPath(), 'utf8')).trim()
+    if (validProvider(saved)) provider = saved
+  } catch { /* OpenAI remains the default for existing installations */ }
   mainWindow = createWindow()
   mainWindow.on('close', (event) => { if (!quitting) { event.preventDefault(); collapse() } })
   mainWindow.once('ready-to-show', showMain)

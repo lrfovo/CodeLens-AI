@@ -1,15 +1,21 @@
 import type { Analysis, CodeSource, Depth, ImageExtraction, Language } from './source'
 
+export type Provider = 'openai' | 'deepseek'
+export const defaultModels: Record<Provider, string> = {
+  openai: 'gpt-4.1-mini', deepseek: 'deepseek-flash',
+}
+
 export interface DesktopSettings {
-  hasApiKey: boolean
-  model: string
+  provider: Provider
+  providers: Record<Provider, { hasApiKey: boolean; model: string }>
   shortcuts: { open: boolean; capture: boolean }
 }
 
 export interface DesktopBridge {
   settings(): Promise<DesktopSettings>
-  setApiKey(key: string): Promise<void>
-  setModel(model: string): Promise<void>
+  setProvider(provider: Provider): Promise<void>
+  setApiKey(provider: Provider, key: string): Promise<void>
+  setModel(provider: Provider, model: string): Promise<void>
   readClipboard(): Promise<string>
   analyze(source: CodeSource, depth: Depth): Promise<Analysis>
   extractImage(image: string): Promise<ImageExtraction>

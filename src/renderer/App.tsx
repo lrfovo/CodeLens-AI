@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { languages } from '../shared/desktop'
+import { defaultModels, languages, type Provider } from '../shared/desktop'
 import { createSource, type Analysis, type CodeSource, type Depth, type Language } from '../shared/source'
 
 type Turn = { question: string; answer: string }
@@ -30,9 +30,12 @@ export function App({ bubble }: { bubble: boolean }) {
   const [busy, setBusy] = useState<'analysis' | 'extract' | 'ask' | null>(null)
   const [error, setError] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [hasKey, setHasKey] = useState(false)
+  const [provider, setProvider] = useState<Provider>('openai')
+  const [settingsProvider, setSettingsProvider] = useState<Provider>('openai')
+  const [hasKeys, setHasKeys] = useState<Record<Provider, boolean>>({ openai: false, deepseek: false })
   const [key, setKey] = useState('')
-  const [model, setModel] = useState('gpt-4.1-mini')
+  const [models, setModels] = useState({ ...defaultModels })
+  const [draftModel, setDraftModel] = useState(defaultModels.openai)
   const [shortcutReady, setShortcutReady] = useState(true)
   const [question, setQuestion] = useState('')
   const [history, setHistory] = useState<Turn[]>([])
@@ -40,8 +43,10 @@ export function App({ bubble }: { bubble: boolean }) {
   useEffect(() => {
     if (bubble) return
     void window.codelens.settings().then((settings) => {
-      setHasKey(settings.hasApiKey)
-      setModel(settings.model)
+      setProvider(settings.provider)
+      setHasKeys({ openai: settings.providers.openai.hasApiKey,
+        deepseek: settings.providers.deepseek.hasApiKey })
+      setModels({ openai: settings.providers.openai.model, deepseek: settings.providers.deepseek.model })
       setShortcutReady(settings.shortcuts.open)
     }).catch((cause) => setError(message(cause)))
     const offCode = window.codelens.onClipboard((value) => {
@@ -63,6 +68,9 @@ export function App({ bubble }: { bubble: boolean }) {
     return analysis.explanations.find((item) => item.id === selectedId) ??
       analysis.explanations.find((item) => selectedLine !== null && selectedLine >= item.startLine && selectedLine <= item.endLine) ?? null
   }, [analysis, selectedId, selectedLine])
+  const hasKey = hasKeys[provider]
+  const providerName = provider === 'openai' ? 'OpenAI' : 'DeepSeek'
+  const settingsProviderName = settingsProvider === 'openai' ? 'OpenAI' : 'DeepSeek'
 
   if (bubble) return <div className="bubble-shell">
     <div className="bubble-handle" aria-label="拖动悬浮图标" />
@@ -80,7 +88,7 @@ export function App({ bubble }: { bubble: boolean }) {
   async function analyze() {
     setError('')
     try {
-      if (!hasKey) throw new Error('请先在设置中保存 OpenAI API 密钥')
+      if (!hasKey) throw new Error(`请先在设置中保存 ${providerName} API 密钥`)
       const next = createSource(text, language)
       setBusy('analysis')
       const result = await window.codelens.analyze(next, depth)
@@ -92,7 +100,7 @@ export function App({ bubble }: { bubble: boolean }) {
   async function extract() {
     setError('')
     try {
-      if (!hasKey) throw new Error('请先在设置中保存 OpenAI API 密钥')
+      if (!hasKey) throw new Error(`请先在设置中保存 ${providerName} API 密钥`)
       setBusy('extract')
       const result = await window.codelens.extractImage(image)
       setText(result.code); setUncertain(result.uncertainReason)
@@ -113,8 +121,15 @@ export function App({ bubble }: { bubble: boolean }) {
   async function saveSettings() {
     setError('')
     try {
-      if (key.trim()) { await window.codelens.setApiKey(key.trim()); setHasKey(true); setKey('') }
-      if (model.trim()) await window.codelens.setModel(model.trim())
+      if (key.trim()) {
+        await window.codelens.setApiKey(settingsProvider, key.trim())
+        setHasKeys((previous) => ({ ...previous, [settingsProvider]: true }))
+        setKey('')
+      }
+      await window.codelens.setModel(settingsProvider, draftModel.trim())
+      await window.codelens.setProvider(settingsProvider)
+      setModels((previous) => ({ ...previous, [settingsProvider]: draftModel.trim() }))
+      setProvider(settingsProvider)
       setSettingsOpen(false)
     } catch (cause) { setError(message(cause)) }
   }
@@ -130,8 +145,10 @@ export function App({ bubble }: { bubble: boolean }) {
     <header className="titlebar">
       <div className="brand"><span className="brand-mark">⌘</span><span><strong>CodeLens AI</strong><small>代码解析助手</small></span></div>
       <div className="title-drag" />
-      <span className="state-pill">{hasKey ? '● AI 已就绪' : '○ 未配置 API'}</span>
-      <button className="title-button" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>⚙</button>
+      <span className="state-pill">{hasKey ? `● ${providerName} 已就绪` : `○ ${providerName} 未配置`}</span>
+      <button className="title-button" aria-label="设置" title="设置" onClick={() => {
+        setSettingsProvider(provider); setDraftModel(models[provider]); setKey(''); setSettingsOpen(true)
+      }}>⚙</button>
       <button className="title-button" aria-label="收起为悬浮图标" title="收起为悬浮图标" onClick={() => void window.codelens.collapse()}>—</button>
       <button className="title-button close" aria-label="退出" title="退出" onClick={() => void window.codelens.quit()}>×</button>
     </header>
@@ -198,10 +215,15 @@ export function App({ bubble }: { bubble: boolean }) {
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false) }}>
       <div className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div className="modal-top"><div><span className="eyebrow">PREFERENCES</span><h2 id="settings-title">AI 设置</h2></div><button aria-label="关闭设置" onClick={() => setSettingsOpen(false)}>×</button></div>
-        <p>密钥仅加密保存在本机。代码和截图会发送到你配置的 OpenAI 模型。</p>
+        <p>密钥分别加密保存在本机。代码和截图会发送到当前选择的 AI 服务商。</p>
         {error && <div className="notice" role="alert">{error}</div>}
-        <label>OpenAI API 密钥<input type="password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={hasKey ? '已保存；留空表示不修改' : '输入 API 密钥'} autoComplete="off" /></label>
-        <label>模型<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4.1-mini" /></label>
+        <label>AI 服务商<select value={settingsProvider} onChange={(event) => {
+          const next = event.target.value as Provider
+          setSettingsProvider(next); setDraftModel(models[next]); setKey('')
+        }}><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option></select></label>
+        <label>{settingsProviderName} API 密钥<input type="password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={hasKeys[settingsProvider] ? '已保存；留空表示不修改' : '输入 API 密钥'} autoComplete="off" /></label>
+        <label>模型<input value={draftModel} onChange={(event) => setDraftModel(event.target.value)} placeholder={defaultModels[settingsProvider]} /></label>
+        {settingsProvider === 'deepseek' && <div className="notice">推荐使用 deepseek-flash，支持截图识别；其他模型可能不支持图片输入。</div>}
         <div className="modal-actions"><button className="action" onClick={() => setSettingsOpen(false)}>取消</button><button className="action primary" onClick={() => void saveSettings()}>保存设置</button></div>
       </div>
     </div>}
