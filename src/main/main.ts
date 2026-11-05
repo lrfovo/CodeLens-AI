@@ -75,9 +75,11 @@ function validSource(value: unknown): value is CodeSource {
   const source = value as CodeSource
   if (typeof source.text !== 'string') return false
   const lines = source.text.split(/\r\n|\n|\r/)
-  return typeof source.id === 'string' && typeof source.text === 'string' &&
+  return typeof source.id === 'string' && source.id.length > 0 &&
     source.text.length <= 30_000 && Array.isArray(source.lines) &&
-    source.lines.length === lines.length && source.lines.every((line, index) => line === lines[index])
+    source.lines.length === lines.length && source.lines.every((line, index) => line === lines[index]) &&
+    source.lineCount === lines.length && source.lineNumberKind === 'snippet' &&
+    ['auto', 'c', 'cpp', 'python', 'stm32'].includes(source.language)
 }
 
 function requireMain(event: Electron.IpcMainInvokeEvent): void {
@@ -117,12 +119,16 @@ function registerIpc(): void {
     return askFollowup(await getKey(), model, source, question, history)
   })
   ipcMain.handle('window:collapse', (event) => { requireMain(event); collapse() })
-  ipcMain.handle('window:expand', () => showMain())
+  ipcMain.handle('window:expand', (event) => {
+    if (event.sender !== bubbleWindow?.webContents) throw new Error('无权调用该操作')
+    showMain()
+  })
   ipcMain.handle('window:quit', (event) => { requireMain(event); quitting = true; app.quit() })
   ipcMain.handle('capture:start', async (event) => { requireMain(event); await startCapture() })
   ipcMain.handle('capture:done', (event, image: unknown) => {
     if (event.sender !== captureWindow?.webContents) throw new Error('无权完成截图')
-    if (typeof image !== 'string' || !image.startsWith('data:image/png;base64,')) throw new Error('截图无效')
+    if (typeof image !== 'string' || image.length > 20_000_000 ||
+        !image.startsWith('data:image/png;base64,')) throw new Error('截图无效或过大')
     finishCapture()
     mainWindow?.webContents.send('capture:image', image)
   })
@@ -148,7 +154,7 @@ async function startCapture(): Promise<void> {
     const sources = await desktopCapturer.getSources({ types: ['screen'],
       thumbnailSize: { width: Math.round(display.bounds.width * display.scaleFactor),
         height: Math.round(display.bounds.height * display.scaleFactor) } })
-    const source = sources.find((item) => item.display_id === String(display.id)) ?? sources[0]
+    const source = sources.find((item) => item.display_id === String(display.id))
     if (!source || source.thumbnail.isEmpty()) throw new Error('无法获取屏幕画面')
     const image = source.thumbnail.toDataURL()
     captureWindow = new BrowserWindow({
@@ -159,6 +165,10 @@ async function startCapture(): Promise<void> {
         sandbox: true, webSecurity: true },
     })
     lockWindow(captureWindow)
+    captureWindow.on('closed', () => {
+      captureWindow = null
+      showMain()
+    })
     captureWindow.webContents.once('did-finish-load', () => captureWindow?.webContents.send('capture:init', image))
     await captureWindow.loadFile(html, { query: { view: 'capture' } })
   } catch (error) {
@@ -183,11 +193,10 @@ app.whenReady().then(async () => {
     if (x !== b.x || y !== b.y) bubbleWindow.setBounds({ ...b, x, y })
   })
   registerIpc()
-  shortcuts.open = globalShortcut.register('Control+Alt+E', () => {
+  shortcuts.open = globalShortcut.register('Control+Alt+E', async () => {
     showMain()
-    void clipboard.readText().then((code) => {
-      if (code.trim()) mainWindow?.webContents.send('clipboard:code', code)
-    })
+    const code = await clipboard.readText()
+    if (code.trim()) mainWindow?.webContents.send('clipboard:code', code)
   })
   shortcuts.capture = globalShortcut.register('Control+Alt+S', () => { void startCapture().catch(() => showMain()) })
 })

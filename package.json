@@ -10,7 +10,7 @@
     "start": "npm run build && electron .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "dist:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-icon.ps1 && npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -32,7 +32,7 @@
     "productName": "CodeLens AI",
     "directories": { "output": "release" },
     "files": ["dist/**/*", "package.json"],
-    "win": { "target": "nsis" },
+    "win": { "target": "nsis", "icon": "build/icon.ico" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
   }
 }
