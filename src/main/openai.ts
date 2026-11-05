@@ -1,4 +1,4 @@
-import { type Analysis, type CodeSource, type Depth, validateAnalysis } from '../shared/source'
+import { type Analysis, type CodeSource, type Depth, type ImageExtraction, validateAnalysis } from '../shared/source'
 
 const endpoint = 'https://api.openai.com/v1/chat/completions'
 
@@ -59,8 +59,6 @@ export async function analyzeCode(key: string, model: string, source: CodeSource
   try { parsed = JSON.parse(content) } catch { throw new Error('模型返回的解释格式无效') }
   return validateAnalysis(source, parsed)
 }
-
-export interface ImageExtraction { code: string; uncertainReason: string }
 
 export async function extractCodeFromImage(key: string, model: string, image: string,
   fetcher: typeof fetch = fetch): Promise<ImageExtraction> {

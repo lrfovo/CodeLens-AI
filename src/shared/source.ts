@@ -25,6 +25,8 @@ export interface Analysis {
   explanations: Explanation[]
 }
 
+export interface ImageExtraction { code: string; uncertainReason: string }
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 

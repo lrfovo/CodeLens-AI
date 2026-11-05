@@ -1,0 +1,35 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import type { DesktopBridge } from '../shared/desktop'
+
+let pendingCapture: string | null = null
+ipcRenderer.on('capture:init', (_event, image: string) => { pendingCapture = image })
+
+function onString(channel: string, callback: (value: string) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, value: string) => callback(value)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
+const bridge: DesktopBridge = {
+  settings: () => ipcRenderer.invoke('settings:get'),
+  setApiKey: (key) => ipcRenderer.invoke('settings:key', key),
+  setModel: (model) => ipcRenderer.invoke('settings:model', model),
+  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
+  analyze: (source, depth) => ipcRenderer.invoke('ai:analyze', source, depth),
+  extractImage: (image) => ipcRenderer.invoke('ai:extract', image),
+  ask: (source, question, history) => ipcRenderer.invoke('ai:ask', source, question, history),
+  startCapture: () => ipcRenderer.invoke('capture:start'),
+  captureDone: (image) => ipcRenderer.invoke('capture:done', image),
+  captureCancel: () => ipcRenderer.invoke('capture:cancel'),
+  collapse: () => ipcRenderer.invoke('window:collapse'),
+  expand: () => ipcRenderer.invoke('window:expand'),
+  quit: () => ipcRenderer.invoke('window:quit'),
+  onClipboard: (callback) => onString('clipboard:code', callback),
+  onImage: (callback) => onString('capture:image', callback),
+  onCaptureInit: (callback) => {
+    if (pendingCapture) callback(pendingCapture)
+    return onString('capture:init', callback)
+  },
+}
+
+contextBridge.exposeInMainWorld('codelens', bridge)
