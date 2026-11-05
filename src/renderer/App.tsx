@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { defaultModels, languages, type Provider } from '../shared/desktop'
 import type { HistorySummary, HistoryTurn } from '../shared/history'
 import { createSource, type Analysis, type CodeSource, type Depth, type Language } from '../shared/source'
@@ -15,6 +15,17 @@ async function readImage(file: File): Promise<string> {
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+
+function centerInPane(pane: HTMLElement | null, target: HTMLElement | undefined): void {
+  if (!pane || !target) return
+  const paneRect = pane.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  pane.scrollTo({
+    top: pane.scrollTop + targetRect.top - paneRect.top - (pane.clientHeight - targetRect.height) / 2,
+    left: pane.scrollLeft,
+    behavior: 'smooth',
+  })
+}
 
 export function App({ bubble }: { bubble: boolean }) {
   const [text, setText] = useState('')
@@ -44,6 +55,10 @@ export function App({ bubble }: { bubble: boolean }) {
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyBusy, setHistoryBusy] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
+  const codeScrollRef = useRef<HTMLDivElement>(null)
+  const explainScrollRef = useRef<HTMLDivElement>(null)
+  const codeLineRefs = useRef(new Map<number, HTMLButtonElement>())
+  const explanationRefs = useRef(new Map<string, HTMLButtonElement>())
 
   useEffect(() => {
     if (bubble) return
@@ -194,6 +209,20 @@ export function App({ bubble }: { bubble: boolean }) {
     `${item.preview} ${item.overview} ${item.language} ${item.provider}`.toLowerCase()
       .includes(historyQuery.trim().toLowerCase()))
 
+  function selectCodeLine(number: number) {
+    const match = analysis?.explanations.find((item) => number >= item.startLine && number <= item.endLine)
+    setSelectedLine(number)
+    setSelectedId(match?.id ?? null)
+    if (match) centerInPane(explainScrollRef.current, explanationRefs.current.get(match.id))
+  }
+
+  function selectExplanation(item: Analysis['explanations'][number]) {
+    setSelectedId(item.id)
+    setSelectedLine(null)
+    const middleLine = Math.floor((item.startLine + item.endLine) / 2)
+    centerInPane(codeScrollRef.current, codeLineRefs.current.get(middleLine))
+  }
+
   return <div className="app-shell" onDragOver={(event) => event.preventDefault()}
     onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void acceptImage(file) }}>
     <header className="titlebar">
@@ -232,12 +261,13 @@ export function App({ bubble }: { bubble: boolean }) {
         <div className="pane-header"><div><span className="pane-index">01</span><h2>原始代码</h2></div><span className="pane-meta">{source ? `${source.lineCount} 行 · 片段行号` : '保持原文不变'}</span></div>
         {image && !source && <div className="image-preview"><img src={image} alt="待转写的代码截图" /><div><span>图片已就绪</span><button onClick={() => void extract()} disabled={!!busy}>{busy === 'extract' ? '正在转写…' : '识别图片代码'}</button></div></div>}
         {uncertain && !source && <div className="notice">识别提示：{uncertain}。请检查下方代码后再解析。</div>}
-        {source ? <div className="code-lines" role="list" aria-label="代码片段行号">
+        {source ? <div className="code-lines" role="list" aria-label="代码片段行号" ref={codeScrollRef}>
           {source.lines.map((line, index) => {
             const number = index + 1
-            const active = highlighted && number >= highlighted.startLine && number <= highlighted.endLine
+            const active = (highlighted && number >= highlighted.startLine && number <= highlighted.endLine) || selectedLine === number
             return <button type="button" role="listitem" className={`code-line ${active ? 'is-highlighted' : ''}`} key={number}
-              onClick={() => { setSelectedLine(number); setSelectedId(null) }} aria-label={`第 ${number} 行：${line || '空行'}`}>
+              ref={(node) => { if (node) codeLineRefs.current.set(number, node); else codeLineRefs.current.delete(number) }}
+              onClick={() => selectCodeLine(number)} aria-label={`第 ${number} 行：${line || '空行'}`}>
               <span className="line-number">{number}</span><code>{line || ' '}</code>
             </button>
           })}
@@ -247,13 +277,15 @@ export function App({ bubble }: { bubble: boolean }) {
 
       <section className="pane explain-pane" aria-label="中文解释">
         <div className="pane-header"><div><span className="pane-index">02</span><h2>中文解释</h2></div><span className="pane-meta">{analysis ? `${analysis.explanations.length} 个行段` : '等待解析'}</span></div>
-        {!analysis ? <div className="empty-state"><div className="empty-glyph">{busy ? '◌' : '⌁'}</div><h3>{busy ? '正在阅读代码' : '解释会显示在这里'}</h3><p>{busy ? '分析行段、函数用途和执行流程…' : '左侧保留原代码；完成解析后，点击任一解释即可高亮对应代码。'}</p></div> :
-          <div className="explanation-scroll">
+        {!analysis ? <div className="empty-state"><div className="empty-glyph">{busy ? '◌' : '⌁'}</div><h3>{busy ? '正在阅读代码' : '解释会显示在这里'}</h3><p>{busy ? '分析行段、函数用途和执行流程…' : '左侧保留原代码；完成解析后，点击代码行或解释卡片可双向定位。'}</p></div> :
+          <div className="explanation-scroll" ref={explainScrollRef}>
             <div className="overview"><span className="section-label">整体概览</span><p>{analysis.overview}</p><span className="section-label">执行流程</span><p>{analysis.flow}</p></div>
-            <div className="section-heading">逐段解释 <span>点击卡片定位代码</span></div>
+            <div className="section-heading">逐段解释 <span>点击卡片或代码行双向定位</span></div>
+            {selectedLine !== null && !highlighted && <div className="notice" role="status">第 {selectedLine} 行暂无对应解释，请选择其他代码行。</div>}
             {analysis.explanations.length === 0 && <div className="notice">模型没有给出可核对的行段解释，请缩小代码片段后重试。</div>}
             {analysis.explanations.map((item) => <button type="button" className={`explanation ${highlighted?.id === item.id ? 'active' : ''}`} key={item.id}
-              onClick={() => { setSelectedId(item.id); setSelectedLine(null) }}>
+              ref={(node) => { if (node) explanationRefs.current.set(item.id, node); else explanationRefs.current.delete(item.id) }}
+              onClick={() => selectExplanation(item)}>
               <span className="range">L{item.startLine}{item.endLine !== item.startLine ? `–${item.endLine}` : ''}</span>
               <strong>{item.summary}</strong><span className="detail">{item.detail}</span>
             </button>)}
