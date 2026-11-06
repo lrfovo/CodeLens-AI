@@ -2,15 +2,17 @@ import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain
   safeStorage, screen } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { analyzeCode, askFollowup, extractCodeFromImage, type AiConfig } from './ai'
+import { analyzeCode, askFollowup, extractCodeFromImage, translateKeyword, type AiConfig } from './ai'
 import { HistoryStore } from './history'
+import { KeywordHistoryStore } from './keyword-history'
 import { defaultModels, type DesktopSettings, type Provider } from '../shared/desktop'
-import type { CodeSource, Depth } from '../shared/source'
+import type { CodeSource, Depth, Language } from '../shared/source'
 
 let mainWindow: BrowserWindow | null = null
 let bubbleWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let historyStore: HistoryStore
+let keywordStore: KeywordHistoryStore
 let quitting = false
 let provider: Provider = 'openai'
 const models = { ...defaultModels }
@@ -172,6 +174,25 @@ function registerIpc(): void {
     return historyStore.delete(id)
   })
   ipcMain.handle('history:clear', (event) => { requireMain(event); return historyStore.clear() })
+  ipcMain.handle('keyword:translate', async (event, term: unknown, language: unknown) => {
+    requireMain(event)
+    if (typeof term !== 'string' || !term.trim() || term.trim().length > 120 ||
+        !['auto', 'c', 'cpp', 'python', 'stm32'].includes(String(language))) throw new Error('关键词输入无效')
+    const config = await aiConfig()
+    const cleaned = term.trim()
+    const translation = await translateKeyword(config, cleaned, language as Language)
+    let historySaved = false
+    try { await keywordStore.add(config.provider, config.model, language as Language, cleaned, translation); historySaved = true }
+    catch (error) { console.error('Failed to save keyword history', error) }
+    return { translation, historySaved }
+  })
+  ipcMain.handle('keyword:list', (event) => { requireMain(event); return keywordStore.list() })
+  ipcMain.handle('keyword:delete', (event, id: unknown) => {
+    requireMain(event)
+    if (typeof id !== 'string') throw new Error('关键词记录 ID 无效')
+    return keywordStore.delete(id)
+  })
+  ipcMain.handle('keyword:clear', (event) => { requireMain(event); return keywordStore.clear() })
   ipcMain.handle('window:collapse', (event) => { requireMain(event); collapse() })
   ipcMain.handle('window:expand', (event) => {
     if (event.sender !== bubbleWindow?.webContents) throw new Error('无权调用该操作')
@@ -233,6 +254,10 @@ async function startCapture(): Promise<void> {
 
 app.whenReady().then(async () => {
   historyStore = new HistoryStore(path.join(app.getPath('userData'), 'history'), {
+    encode: (text) => safeStorage.encryptStringAsync(text),
+    decode: async (data) => (await safeStorage.decryptStringAsync(data)).result,
+  })
+  keywordStore = new KeywordHistoryStore(path.join(app.getPath('userData'), 'keyword-history'), {
     encode: (text) => safeStorage.encryptStringAsync(text),
     decode: async (data) => (await safeStorage.decryptStringAsync(data)).result,
   })

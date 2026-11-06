@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { analyzeCode, extractCodeFromImage } from './ai'
+import { analyzeCode, extractCodeFromImage, translateKeyword } from './ai'
 import { createSource } from '../shared/source'
 
 const mockResponse = (content: unknown) => ({
@@ -8,6 +8,20 @@ const mockResponse = (content: unknown) => ({
 }) as Response
 
 describe('AI provider boundary', () => {
+  it('translates a programming keyword using the selected provider and validates the result', async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      mockResponse({ translation: '易变的', explanation: '禁止相关优化假设', example: 'volatile int flag;' }))
+    const result = await translateKeyword({ provider: 'deepseek', key: 'test-key', model: 'deepseek-flash' },
+      'volatile', 'c', fetcher as typeof fetch)
+    expect(result.translation).toBe('易变的')
+    expect(fetcher.mock.calls[0][0]).toBe('https://api.deepseek.com/chat/completions')
+    const request = JSON.parse(String(fetcher.mock.calls[0][1]?.body))
+    expect(request.messages[1].content).toContain('volatile')
+    expect(request.response_format).toEqual({ type: 'json_object' })
+    await expect(translateKeyword({ provider: 'deepseek', key: 'test-key', model: 'deepseek-flash' },
+      'x'.repeat(121), 'c', fetcher as typeof fetch)).rejects.toThrow('120')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
   it('validates returned line ranges against the unchanged source', async () => {
     const source = createSource('x\ny', 'python')
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => mockResponse({ overview: '概览', flow: '顺序', explanations: [

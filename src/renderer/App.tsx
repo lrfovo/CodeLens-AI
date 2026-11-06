@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { defaultModels, languages, type Provider } from '../shared/desktop'
 import type { HistorySummary, HistoryTurn } from '../shared/history'
 import { createSource, type Analysis, type CodeSource, type Depth, type Language } from '../shared/source'
+import { KeywordDialog } from './KeywordDialog'
 
 async function readImage(file: File): Promise<string> {
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('只支持 PNG、JPEG 或 WebP 图片')
@@ -40,6 +41,7 @@ export function App({ bubble }: { bubble: boolean }) {
   const [busy, setBusy] = useState<'analysis' | 'extract' | 'ask' | null>(null)
   const [error, setError] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [keywordOpen, setKeywordOpen] = useState(false)
   const [provider, setProvider] = useState<Provider>('openai')
   const [settingsProvider, setSettingsProvider] = useState<Provider>('openai')
   const [hasKeys, setHasKeys] = useState<Record<Provider, boolean>>({ openai: false, deepseek: false })
@@ -247,6 +249,7 @@ export function App({ bubble }: { bubble: boolean }) {
         <button className="action" onClick={() => void window.codelens.startCapture().catch((cause) => setError(message(cause)))}>截取屏幕</button>
         <label className="action file-action">导入图片<input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void acceptImage(file); event.target.value = '' }} /></label>
         <button className="action" disabled={!!busy} onClick={() => void openHistory()}>历史记录</button>
+        <button className="action" onClick={() => setKeywordOpen(true)}>关键词翻译</button>
       </div>
       <div className="toolbar-group selectors">
         <label>语言 <select value={language} onChange={(event) => setLanguage(event.target.value as Language)}>{languages.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
@@ -298,6 +301,8 @@ export function App({ bubble }: { bubble: boolean }) {
     </main>
 
     <footer className="statusbar"><span>本地片段行号 · 解析历史加密保存在本机</span><span>截图原图不会写入历史记录</span></footer>
+
+    {keywordOpen && <KeywordDialog language={language} onClose={() => setKeywordOpen(false)} />}
 
     {historyOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false) }}>
       <div className="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">

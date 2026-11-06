@@ -1,5 +1,6 @@
 import type { CodeSource, Depth, ImageExtraction, Language } from './source'
 import type { AnalysisResult, HistoryRecord, HistorySummary, HistoryTurn, QuestionResult } from './history'
+import type { KeywordRecord, KeywordResult } from './keyword'
 
 export type Provider = 'openai' | 'deepseek'
 export const defaultModels: Record<Provider, string> = {
@@ -21,6 +22,10 @@ export interface DesktopBridge {
   analyze(source: CodeSource, depth: Depth): Promise<AnalysisResult>
   extractImage(image: string): Promise<ImageExtraction>
   ask(source: CodeSource, question: string, history: HistoryTurn[], historyId: string | null): Promise<QuestionResult>
+  translateKeyword(term: string, language: Language): Promise<KeywordResult>
+  listKeywords(): Promise<KeywordRecord[]>
+  deleteKeyword(id: string): Promise<void>
+  clearKeywords(): Promise<void>
   listHistory(): Promise<HistorySummary[]>
   getHistory(id: string): Promise<HistoryRecord>
   deleteHistory(id: string): Promise<void>
